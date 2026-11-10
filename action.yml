@@ -1,0 +1,53 @@
+name: ghtraffic
+description: Collect GitHub traffic (views, clones, referrers, paths, stars) across your repos and orgs, and commit the accumulated history.
+branding:
+  icon: bar-chart-2
+  color: blue
+inputs:
+  token:
+    description: A token with push access to the repos to collect (classic, scopes `repo` + `read:org`).
+    required: true
+  data-dir:
+    description: Where the history lives in the checked-out repository.
+    default: "."
+  config:
+    description: Path to ghtraffic.toml (default <data-dir>/ghtraffic.toml).
+    default: ""
+  commit:
+    description: Commit and push the updated history.
+    default: "true"
+  fail-on-errors:
+    description: Fail the job when some repo or owner errored (never for missing access).
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Collect
+      shell: bash
+      env:
+        GHTRAFFIC_TOKEN: ${{ inputs.token }}
+        PYTHONPATH: ${{ github.action_path }}
+        DATA_DIR: ${{ inputs.data-dir }}
+        CONFIG: ${{ inputs.config }}
+        FAIL_ON_ERRORS: ${{ inputs.fail-on-errors }}
+      run: |
+        args=(collect --data-dir "$DATA_DIR")
+        [ -n "$CONFIG" ] && args+=(--config "$CONFIG")
+        [ "$FAIL_ON_ERRORS" = "true" ] && args+=(--fail-on-errors)
+        python3 -m ghtraffic "${args[@]}"
+    - name: Commit
+      if: inputs.commit == 'true'
+      shell: bash
+      env:
+        DATA_DIR: ${{ inputs.data-dir }}
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add -A "$DATA_DIR"
+        if git diff --cached --quiet; then echo "No change."; exit 0; fi
+        git commit -q -m "ghtraffic: collect $(date -u +%F)"
+        for i in 1 2 3; do
+          git push && exit 0
+          git pull --rebase -q || exit 1
+        done
+        exit 1

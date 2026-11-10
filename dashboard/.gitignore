@@ -1,0 +1,4 @@
+node_modules/
+dist/
+# Synthetic demo data, generated in CI by `python -m ghtraffic demo` (never committed).
+public/demo/
