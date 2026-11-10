@@ -1,0 +1,32 @@
+{
+  "name": "ghtraffic-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Static dashboard for a ghtraffic data directory (GitHub traffic, stars, referrers).",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@zodal/core": "0.2.0",
+    "@zodal/store": "0.2.0",
+    "@zodal/store-localstorage": "0.2.0",
+    "immer": "^10.1.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "^4.6.7",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "~5.9.3",
+    "vite": "^6.4.1",
+    "vitest": "^4.1.12"
+  }
+}
