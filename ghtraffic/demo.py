@@ -9,12 +9,13 @@ real collection, so the demo exercises the real on-disk format.
 
 from __future__ import annotations
 
+import json
 import math
 import random
 from collections.abc import MutableMapping
 from datetime import date, timedelta
 
-from ghtraffic.collect import write_manifest
+from ghtraffic.collect import LAST_RUN_KEY, write_manifest
 from ghtraffic.tables import TABLES, write_rows
 
 DEMO_REPOS = {
@@ -182,4 +183,6 @@ def make_demo_data(
     ]
     for name, spec in TABLES.items():
         write_rows(store, spec, rows[name])
+    last_run = {**rows["runs"][0], "no_access": [], "errors": {}, "owner_errors": {}}
+    store[LAST_RUN_KEY] = json.dumps(last_run, indent=2) + "\n"
     return write_manifest(store, updated=today.isoformat())

@@ -348,3 +348,11 @@ def test_cli_exposes_every_setting():
     )
     assert args.include_forks is False and args.snapshot_every_days == 3
     assert all(hasattr(args, f.name) for f in fields(Settings))
+
+
+def test_demo_is_a_complete_data_dir(tmp_path):
+    from ghtraffic.demo import make_demo_data
+
+    m = make_demo_data(Files(tmp_path), n_days=30)
+    assert (tmp_path / "last_run.json").exists()
+    assert all(m["tables"][t]["files"] for t in ("views", "clones", "stars", "repos"))
