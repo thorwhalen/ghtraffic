@@ -13,7 +13,9 @@ import os
 from collections.abc import Iterable
 from pathlib import Path
 
-DFLT_ACTION_REF = "thorwhalen/ghtraffic@main"
+ACTION_REPO = "thorwhalen/ghtraffic"
+#: A moving branch: only for when no release version is known (a source checkout).
+FALLBACK_ACTION_REF = f"{ACTION_REPO}@main"
 #: 03:17 UTC on Mondays and Thursdays: off the top of the hour (GitHub delays
 #: on-the-hour crons). Every day is seen 3-4 times within its 14-day window,
 #: so two missed runs in a row still lose nothing, for ~9 runs a month.
@@ -26,7 +28,9 @@ WORKFLOW_TEMPLATE = """\
 #
 # Needs one secret, GHTRAFFIC_TOKEN: a token with push access to the repos to
 # collect (a classic token with the `repo` and `read:org` scopes covers every
-# owner you can push to). Keep this repository PRIVATE if any collected repo is.
+# owner you can push to). Keep this repository PRIVATE if any collected repo is:
+# the action refuses to commit private repos' data into a public repository.
+# The action is pinned to a release; upgrade by editing the tag below.
 name: ghtraffic
 on:
   schedule:
@@ -68,9 +72,24 @@ backfill_stars = true
 GITIGNORE = "__pycache__/\n"
 
 
-def render_workflow(*, cron: str = DFLT_CRON, action_ref: str = DFLT_ACTION_REF) -> str:
+def default_action_ref() -> str:
+    """``thorwhalen/ghtraffic@<installed version>``: the workflow runs the release
+    you installed (tags are the bare version), not whatever lands on ``main``
+    later. The token you give the Action can read every repo it covers, so pin
+    it; upgrade by editing the tag (or pin a commit SHA)."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return f"{ACTION_REPO}@{version('ghtraffic')}"
+    except PackageNotFoundError:
+        return FALLBACK_ACTION_REF
+
+
+def render_workflow(*, cron: str = DFLT_CRON, action_ref: str | None = None) -> str:
     """The workflow YAML for a data repo."""
-    return WORKFLOW_TEMPLATE.format(cron=cron, action_ref=action_ref)
+    return WORKFLOW_TEMPLATE.format(
+        cron=cron, action_ref=action_ref or default_action_ref()
+    )
 
 
 def render_config(owners: Iterable[str] = ("@me",)) -> str:
@@ -83,7 +102,7 @@ def init_data_repo(
     *,
     owners: Iterable[str] = ("@me",),
     cron: str = DFLT_CRON,
-    action_ref: str = DFLT_ACTION_REF,
+    action_ref: str | None = None,
     overwrite: bool = False,
 ) -> list[str]:
     """Write the workflow and config into ``rootdir``; return the paths written."""

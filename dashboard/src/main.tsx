@@ -36,7 +36,12 @@ function installPressFeedback() {
 }
 
 installPressFeedback();
-createRoot(document.getElementById("root")!).render(
+// Refuse to run inside a frame: the page can hold a token, and a CSP set in a
+// <meta> tag cannot forbid framing (frame-ancestors), so another site could
+// overlay it (clickjacking). Opening the page directly always works.
+if (window.top !== window.self) {
+  document.getElementById("root")!.textContent = "ghtraffic does not run inside a frame. Open it directly.";
+} else createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <App />
   </StrictMode>,

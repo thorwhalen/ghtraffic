@@ -9,7 +9,7 @@ collects every repo of the authenticated user and their organizations.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 import tomllib
@@ -46,18 +46,22 @@ class Settings:
     snapshot_every_days: int = 14
     backfill_stars: bool = True
     max_workers: int = 8
-    extra: dict = field(default_factory=dict, compare=False)
 
 
 def _from_mapping(d: dict) -> Settings:
     d = dict(d.get("ghtraffic", d))
-    known = {f.name for f in fields(Settings)} - {"extra"}
-    kwargs = {k: d.pop(k) for k in list(d) if k in known}
+    known = [f.name for f in fields(Settings)]
+    unknown = sorted(set(d) - set(known))
+    if unknown:
+        raise ValueError(
+            f"Unknown ghtraffic setting(s) {unknown}; valid keys are {known}."
+        )
     for k in ("owners", "exclude"):
-        if k in kwargs:
-            v = kwargs[k]
-            kwargs[k] = (v,) if isinstance(v, str) else tuple(v)
-    return Settings(**kwargs, extra=d)
+        if isinstance(d.get(k), str):
+            d[k] = (d[k],)
+        elif k in d:
+            d[k] = tuple(d[k])
+    return Settings(**d)
 
 
 def load_settings(path: str | os.PathLike | None = None, **overrides) -> Settings:
@@ -66,9 +70,5 @@ def load_settings(path: str | os.PathLike | None = None, **overrides) -> Setting
     if path is not None and Path(path).exists():
         s = _from_mapping(tomllib.loads(Path(path).read_text(encoding="utf-8")))
     overrides = {k: v for k, v in overrides.items() if v is not None}
-    for k in ("owners", "exclude"):
-        if isinstance(overrides.get(k), str):
-            overrides[k] = (overrides[k],)
-        elif k in overrides:
-            overrides[k] = tuple(overrides[k])
-    return replace(s, **overrides)
+    base = {f.name: getattr(s, f.name) for f in fields(Settings)}
+    return _from_mapping({**base, **overrides})

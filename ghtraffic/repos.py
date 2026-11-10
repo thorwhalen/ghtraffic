@@ -5,6 +5,10 @@ authenticated user and every organization they belong to. One GraphQL page
 returns up to 100 repos with everything the collector needs to decide whether
 traffic is readable (``viewerPermission``) and to snapshot stars and forks, so
 a whole organization costs a handful of calls.
+
+Extraction candidate: i2mint/ghir#3 (a shared, dependency-free owners -> repos
+enumerator). :func:`ghtraffic.collect.collect` takes ``list_repos=`` so the
+swap is an addition; the record contract it relies on is :data:`REPO_FIELDS`.
 """
 
 from __future__ import annotations
@@ -16,6 +20,22 @@ from typing import Any
 from ghtraffic.github import GitHubError, GraphQL, Rest
 
 ME = "@me"
+#: Keys every repo record must carry (the contract with ``collect``).
+REPO_FIELDS = (
+    "repo",
+    "owner",
+    "private",
+    "fork",
+    "archived",
+    "can_push",
+    "stars",
+    "forks",
+    "watchers",
+    "created_at",
+    "pushed_at",
+    "language",
+    "description",
+)
 DFLT_PAGE_SIZE = 100
 #: ``viewerPermission`` values that grant push access, which traffic needs.
 PUSH_PERMISSIONS = frozenset({"ADMIN", "MAINTAIN", "WRITE"})
@@ -38,9 +58,14 @@ query($owner: String!, $after: String, $n: Int!) {
 
 def my_owners(rest: Rest) -> list[str]:
     """The authenticated user's login followed by their organizations' logins."""
-    return [rest("/user")["login"]] + [
-        o["login"] for o in rest("/user/orgs?per_page=100")
-    ]
+    owners = [rest("/user")["login"]]
+    page = 1
+    while True:
+        orgs = rest(f"/user/orgs?per_page=100&page={page}") or []
+        owners += [o["login"] for o in orgs]
+        if len(orgs) < 100:
+            return owners
+        page += 1
 
 
 def expand_owners(owners: Iterable[str], *, me: Callable[[], list[str]]) -> list[str]:
@@ -130,7 +155,13 @@ def list_repos(
     def me() -> list[str]:
         if rest is None:
             raise ValueError('Expanding "@me" needs a `rest` transport.')
-        return my_owners(rest)
+        try:
+            return my_owners(rest)
+        except GitHubError as e:
+            if on_error is None:
+                raise
+            on_error(ME, e)
+            return []
 
     for owner in expand_owners(owners, me=me):
         if is_excluded(f"{owner}/*", exclude):

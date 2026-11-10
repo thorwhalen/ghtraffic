@@ -21,10 +21,14 @@ GitHub shows a repo's views, clones, referrers and popular pages for the last 14
 
    ```yaml
    - uses: actions/checkout@v4
-   - uses: thorwhalen/ghtraffic@main
+   - uses: thorwhalen/ghtraffic@0.0.2   # the release you installed; pin it
      with:
        token: ${{ secrets.GHTRAFFIC_TOKEN }}
    ```
+
+   The Action is pinned to a release tag (or pin a commit SHA): the token it receives can read every repo it covers, so it should run code you chose, not whatever lands on `main` later. It refuses to commit private repos' data into a public repository (input `allow-public: true` overrides).
+
+   `"@me"` means you **and every organization you belong to**, including client or employer organizations whose repo names and traffic may not be yours to copy. List owners explicitly, or use `exclude = ["client-org/*"]`, when that matters.
 
 2. Create a token with push access to the repos you want: a [classic token with the `repo` and `read:org` scopes](https://github.com/settings/tokens/new?scopes=repo,read:org&description=ghtraffic) covers every owner you can push to (a fine-grained token is limited to one owner). Save it as the data repo's `GHTRAFFIC_TOKEN` secret:
 
@@ -36,7 +40,7 @@ GitHub shows a repo's views, clones, referrers and popular pages for the last 14
 
 ## Look at it
 
-Open the dashboard at https://thorwhalen.github.io/ghtraffic/ and point it at your data repo, or use `#repo=<owner>/<data-repo>` in the URL. Paste a [fine-grained token](https://github.com/settings/personal-access-tokens/new) that can only **read the contents of that one repo**. Your browser fetches the data straight from the GitHub API with it. The page itself is public and holds no data, and the token is kept in your browser only.
+Open the dashboard at https://thorwhalen.github.io/ghtraffic/ and point it at your data repo, or use `#repo=<owner>/<data-repo>` in the URL. Paste a [fine-grained token](https://github.com/settings/personal-access-tokens/new) that can only **read the contents of that one repo**. Your browser fetches the data straight from the GitHub API with it. The page itself is public, holds no data, talks to no host but GitHub, and refuses to run inside a frame. The token stays in memory unless you tick "remember"; a remembered token is readable by any page on the same `<user>.github.io` origin, which is one more reason to give it read access to the data repo only. `?data=<url>` reads a public data directory from `raw.githubusercontent.com` instead.
 
 It shows totals and growth over any time range, by owner and repo, views or clones, totals or uniques, a sortable leaderboard with sparklines, top referrers and pages, and stars and forks over time.
 
@@ -74,7 +78,9 @@ print(report.summary())
 | `backfill_stars` | `true` | rebuild a repo's star history the first time it is seen |
 | `max_workers` | `8` | concurrent requests |
 
-Repos you cannot push to have no readable traffic: they are counted and listed in `last_run.json`, never an error.
+Unknown keys are refused (a typo never silently falls back to a default). Every key is also a `ghtraffic collect` flag (`--no-include-forks`, `--snapshot-every-days 7`, ...).
+
+Repos you cannot push to have no readable traffic: they are counted and listed in `last_run.json`, never an error. An organization policy refusing the token (SAML SSO, a ban on classic tokens) is an error, listed with the repo, so a whole org never silently reads as zero traffic. The Action log carries counts only; names and messages go to `last_run.json`.
 
 ## Data layout
 
@@ -87,16 +93,18 @@ Plain CSV, one table per kind, split by year, sorted by date so each run adds li
 | `referrers/YYYY.csv`, `paths/YYYY.csv` | the top 10 over the 14 days before `fetched`; snapshots are 14 days apart, so they never overlap |
 | `stars.csv` | `date,repo,stars,forks,watchers`: a row only when something changed |
 | `repos.csv` | current metadata of every repo seen |
+| `backfills.csv` | when each repo's star history was rebuilt (a failed backfill is retried next run) |
 | `runs.csv`, `last_run.json` | one row per run; the last run's details (repos without access, errors) |
 
 A day seen by several runs keeps the largest value of each field, so overlapping windows, re-runs and partial days all merge to the same result. Why this layout, and the alternatives: [docs/adr/0001-storage.md](docs/adr/0001-storage.md).
 
 ## Cost
 
-One job per run, about 1 minute (a few minutes for the cold start with star history). At two runs a week that is about 10 to 20 Actions minutes a month on a private repository, and two missed runs in a row still lose nothing. Data grows by roughly 3 to 5 MB a year for ~600 repos.
+One job per run, about 1 minute (a few minutes for the cold start with star history). At two runs a week that is about 10 to 20 Actions minutes a month on a private repository, and two missed runs in a row still lose nothing. Data grows by a few MB a year for a few hundred repos.
 
 ## Limits
 
 - GitHub keeps traffic for 14 days. Nothing earlier can be recovered, except star history.
 - Star history counts current stargazers by the date they starred; unstars are invisible.
-- Referrers and paths are GitHub's top 10 per repo only.
+- Referrers and paths are GitHub's top 10 per repo only. Snapshots are 14 days apart so they can be added up; a missed snapshot run loses the referrer and path data of the days it slipped by (daily views and clones are unaffected).
+- One token for every owner means a classic token (fine-grained tokens are per owner).

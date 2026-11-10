@@ -30,8 +30,10 @@ import os
 from collections.abc import Iterable, Iterator, MutableMapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 SCHEMA_VERSION = 1
+MergePolicy = Literal["max", "replace_group", "change_only", "upsert"]
 MANIFEST_KEY = "manifest.json"
 
 
@@ -42,7 +44,7 @@ class TableSpec:
     name: str
     columns: tuple[str, ...]
     key: tuple[str, ...]
-    merge: str  # 'max' | 'replace_group' | 'change_only' | 'upsert' | 'append'
+    merge: MergePolicy
     int_columns: tuple[str, ...] = ()
     time_column: str | None = None  # partition by its year when set
     group: tuple[str, ...] = ()  # for 'replace_group'
@@ -126,6 +128,14 @@ TABLES: dict[str, TableSpec] = {
             description="Stars, forks and watchers, one row per change "
             "(backfilled star rows have empty forks and watchers).",
             sort=("repo", "date"),
+        ),
+        TableSpec(
+            "backfills",
+            ("repo", "kind", "date"),
+            key=("repo", "kind"),
+            merge="upsert",
+            description="When each repo's history was backfilled (kind: stars), "
+            "so a failed backfill is retried and a successful one is not repeated.",
         ),
         TableSpec(
             "repos",
@@ -274,7 +284,7 @@ def merge_rows(spec: TableSpec, old: list[dict], new: list[dict]) -> list[dict]:
     def key(r):
         return tuple(str(r[c]) for c in spec.key)
 
-    if spec.merge in ("max", "upsert", "append"):
+    if spec.merge in ("max", "upsert"):
         merged = {key(r): r for r in old}
         for r in new:
             k = key(r)
@@ -299,22 +309,18 @@ def merge_rows(spec: TableSpec, old: list[dict], new: list[dict]) -> list[dict]:
         return kept + new
 
     if spec.merge == "change_only":
-        merged = {key(r): r for r in old}
-        by_repo: dict[str, list[dict]] = {}
-        for r in old:
-            by_repo.setdefault(r["repo"], []).append(r)
-        for r in sorted(new, key=lambda r: str(r["date"])):
-            history = by_repo.setdefault(r["repo"], [])
-            prior = [m for m in history if str(m["date"]) <= str(r["date"])]
-            last = max(prior, key=lambda m: str(m["date"]), default=None)
-            if last is not None and key(last) != key(r):
-                if _values(spec, last) == _values(spec, r):
-                    continue
-            if key(r) in merged:
-                history.remove(merged[key(r)])
-            merged[key(r)] = r
-            history.append(r)
-        return list(merged.values())
+        merged: dict[tuple, dict] = {}
+        for r in old + new:  # same key: field-wise, a non-empty newer value wins
+            prev = merged.get(key(r), {})
+            merged[key(r)] = {
+                c: r[c] if r[c] != "" else prev.get(c, "") for c in spec.columns
+            }
+        kept, last_values = [], {}
+        for r in sorted(merged.values(), key=lambda r: (r["repo"], str(r["date"]))):
+            if last_values.get(r["repo"]) != _values(spec, r):
+                kept.append(r)
+                last_values[r["repo"]] = _values(spec, r)
+        return kept
 
     raise ValueError(f"Unknown merge policy {spec.merge!r} for table {spec.name!r}")
 

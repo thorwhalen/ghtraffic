@@ -31,7 +31,7 @@ export const SettingsSchema = z.object({
   ghBranch: z.catch(z.string(), "main"),
   ghPath: z.catch(z.string(), ""),
   token: z.catch(z.string(), ""),
-  rememberToken: z.catch(z.boolean(), true),
+  rememberToken: z.catch(z.boolean(), false), // opt-in: a remembered token is readable by every page on this origin
   theme: z.catch(z.enum(THEMES), "system"),
 });
 export type Settings = z.infer<typeof SettingsSchema>;

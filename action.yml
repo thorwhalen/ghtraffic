@@ -5,7 +5,7 @@ branding:
   color: blue
 inputs:
   token:
-    description: A token with push access to the repos to collect (classic, scopes `repo` + `read:org`).
+    description: A token with push access to the repos to collect (classic, scopes `repo` + `read:org`, for several owners).
     required: true
   data-dir:
     description: Where the history lives in the checked-out repository.
@@ -16,38 +16,57 @@ inputs:
   commit:
     description: Commit and push the updated history.
     default: "true"
+  allow-public:
+    description: Allow committing private repos' data into a PUBLIC data repository (refused by default).
+    default: "false"
   fail-on-errors:
     description: Fail the job when some repo or owner errored (never for missing access).
     default: "false"
 runs:
   using: composite
   steps:
-    - name: Collect
+    - name: Collect and commit
       shell: bash
       env:
         GHTRAFFIC_TOKEN: ${{ inputs.token }}
         PYTHONPATH: ${{ github.action_path }}
         DATA_DIR: ${{ inputs.data-dir }}
         CONFIG: ${{ inputs.config }}
+        COMMIT: ${{ inputs.commit }}
+        ALLOW_PUBLIC: ${{ inputs.allow-public }}
         FAIL_ON_ERRORS: ${{ inputs.fail-on-errors }}
       run: |
+        set -euo pipefail
+        # ghtraffic needs only the standard library, but Python 3.11+ (tomllib).
+        python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' || {
+          echo "::error::ghtraffic needs Python 3.11+; add actions/setup-python before this step."; exit 1; }
+
         args=(collect --data-dir "$DATA_DIR")
         [ -n "$CONFIG" ] && args+=(--config "$CONFIG")
         [ "$FAIL_ON_ERRORS" = "true" ] && args+=(--fail-on-errors)
-        python3 -m ghtraffic "${args[@]}"
-    - name: Commit
-      if: inputs.commit == 'true'
-      shell: bash
-      env:
-        DATA_DIR: ${{ inputs.data-dir }}
-      run: |
+        status=0
+        python3 -m ghtraffic "${args[@]}" || status=$?
+        [ "$COMMIT" = "true" ] || exit $status
+
+        # Never put private repos' data into a public repository.
+        if [ "$ALLOW_PUBLIC" != "true" ]; then
+          python3 -m ghtraffic guard --data-dir "$DATA_DIR" --repo "$GITHUB_REPOSITORY"
+        fi
+
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git add -A "$DATA_DIR"
-        if git diff --cached --quiet; then echo "No change."; exit 0; fi
-        git commit -q -m "ghtraffic: collect $(date -u +%F)"
-        for i in 1 2 3; do
-          git push && exit 0
-          git pull --rebase -q || exit 1
+        commit() {
+          git add -A "$DATA_DIR"
+          git diff --cached --quiet || git commit -q -m "ghtraffic: collect $(date -u +%F)"
+        }
+        commit
+        # On a push race, start from the remote and collect again: merges are
+        # idempotent, so re-collecting loses nothing and never conflicts.
+        for attempt in 1 2 3; do
+          git push -q && exit $status
+          git fetch -q origin "$GITHUB_REF_NAME"
+          git reset -q --hard "origin/$GITHUB_REF_NAME"
+          python3 -m ghtraffic "${args[@]}" || status=$?
+          commit
         done
-        exit 1
+        echo "::error::could not push after 3 attempts"; exit 1

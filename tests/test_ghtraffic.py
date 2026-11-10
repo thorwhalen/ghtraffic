@@ -30,8 +30,9 @@ def _node(name, *, perm="WRITE", stars=0, private=False, fork=False):
 class FakeGitHub:
     """Serves a fixed world; ``days`` is the 14-day window currently visible."""
 
-    def __init__(self, days, *, views=3, forbidden=()):
+    def __init__(self, days, *, views=3, forbidden=(), sso=(), star_fail=None):
         self.days, self.views, self.forbidden = days, views, set(forbidden)
+        self.sso, self.star_fail = set(sso), star_fail
         self.calls = []
         self.nodes = {
             "me": [_node("me/a", stars=2), _node("me/b", perm="READ")],
@@ -47,6 +48,10 @@ class FakeGitHub:
         repo = "/".join(path.split("/")[2:4])
         if repo in self.forbidden:
             raise GitHubError(403, "Must have push access to repository", path=path)
+        if repo in self.sso:
+            raise GitHubError(
+                403, "Resource protected by organization SAML enforcement", path=path
+            )
         kind = path.split("/traffic/")[1].split("?")[0]
         if kind in ("views", "clones"):
             series = [
@@ -64,6 +69,10 @@ class FakeGitHub:
 
     def graphql(self, query, variables):
         if "stargazers" in query:
+            if self.star_fail == "null":
+                return {"repository": None}
+            if self.star_fail == "502":
+                raise GitHubError(502, "Bad gateway")
             return {
                 "repository": {
                     "stargazers": {
@@ -241,3 +250,101 @@ def test_dashboard_schema_matches_tables():
     m = re.search(r"export const TABLE_COLUMNS = (\{.*?\}) as const;", ts, re.S)
     assert m, "TABLE_COLUMNS constant not found in dashboard/src/schema.ts"
     assert json.loads(m.group(1)) == {k: list(v.columns) for k, v in TABLES.items()}
+
+
+def test_policy_block_is_an_error_not_no_access(tmp_path):
+    gh = FakeGitHub(_days("2026-10-27", 14), sso={"org/c"})
+    r = _run(Files(tmp_path), gh, "2026-11-10T03:00:00")
+    assert "org/c" not in r.no_access and "org/c" in r.errors
+
+
+@pytest.mark.parametrize("failure", ["null", "502"])
+def test_failed_star_backfill_never_sinks_the_run_and_is_retried(tmp_path, failure):
+    store = Files(tmp_path)
+    gh = FakeGitHub(_days("2026-10-27", 14), star_fail=failure)
+    r = _run(store, gh, "2026-11-10T03:00:00")
+    assert "me/a" in r.errors and r.repos_collected == 3  # traffic still written
+    gh.star_fail = None
+    _run(store, gh, "2026-11-11T03:00:00")
+    stars = [s for s in read_table(store, TABLES["stars"]) if s["repo"] == "me/a"]
+    assert [s["date"] for s in stars][:2] == ["2025-03-01", "2025-06-01"]
+    gh.calls.clear()
+    _run(store, gh, "2026-11-12T03:00:00")  # done once: not repeated
+
+
+def test_worker_exception_is_recorded_per_repo(tmp_path):
+    gh = FakeGitHub(_days("2026-10-27", 14))
+    orig = gh.rest
+
+    def rest(path):
+        if path.startswith("/repos/org/c/"):
+            raise ValueError("garbage body")
+        return orig(path)
+
+    gh.rest = rest
+    r = _run(Files(tmp_path), gh, "2026-11-10T03:00:00")
+    assert "ValueError" in r.errors["org/c"] and r.repos_collected == 2
+
+
+def test_change_only_same_day_merges_fieldwise_and_stays_minimal():
+    from ghtraffic.tables import merge_rows
+
+    spec = TABLES["stars"]
+    live = {"date": "2026-11-10", "repo": "a/b", "stars": 3, "forks": 1, "watchers": 2}
+    backfill = {
+        "date": "2026-11-10",
+        "repo": "a/b",
+        "stars": 3,
+        "forks": "",
+        "watchers": "",
+    }
+    assert merge_rows(spec, [], [backfill, live]) == [live]
+    assert merge_rows(spec, [], [live, backfill]) == [live]  # empty never erases
+    day2 = {**live, "date": "2026-11-11"}
+    assert merge_rows(spec, [live], [day2]) == [live]  # unchanged: no row
+    early = {**live, "date": "2026-11-01"}
+    assert merge_rows(spec, [live], [early]) == [early]  # later equal row dropped
+
+
+def test_unknown_setting_is_refused(tmp_path):
+    (tmp_path / "ghtraffic.toml").write_text("[ghtraffic]\nsnapshot_every_day = 7\n")
+    with pytest.raises(ValueError, match="snapshot_every_day"):
+        load_settings(tmp_path / "ghtraffic.toml")
+
+
+def test_graphql_partial_errors_are_raised(monkeypatch):
+    from ghtraffic import github
+
+    payload = {
+        "data": {"x": 1},
+        "errors": [{"type": "RATE_LIMITED", "message": "slow"}],
+    }
+    monkeypatch.setattr(github, "_request", lambda *a, **k: payload)
+    with pytest.raises(GitHubError) as e:
+        github.make_graphql("tok")("query", {})
+    assert e.value.is_rate_limit
+
+
+def test_guard_refuses_private_data_in_public_repo(tmp_path, monkeypatch):
+    from ghtraffic import __main__ as cli
+    from ghtraffic import github
+
+    store = Files(tmp_path)
+    _run(store, FakeGitHub(_days("2026-10-27", 14)), "2026-11-10T03:00:00")
+    monkeypatch.setattr(github, "make_rest", lambda: lambda path: {"private": False})
+    assert cli.main(["guard", "--data-dir", str(tmp_path), "--repo", "x/y"]) == 1
+    monkeypatch.setattr(github, "make_rest", lambda: lambda path: {"private": True})
+    assert cli.main(["guard", "--data-dir", str(tmp_path), "--repo", "x/y"]) == 0
+
+
+def test_cli_exposes_every_setting():
+    from dataclasses import fields
+
+    from ghtraffic.__main__ import _parser
+    from ghtraffic.config import Settings
+
+    args = _parser().parse_args(
+        ["collect", "--no-include-forks", "--snapshot-every-days", "3"]
+    )
+    assert args.include_forks is False and args.snapshot_every_days == 3
+    assert all(hasattr(args, f.name) for f in fields(Settings))

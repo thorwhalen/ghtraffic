@@ -30,6 +30,15 @@ DFLT_TIMEOUT = 30
 DFLT_RETRIES = 4
 DFLT_BACKOFF_S = 2.0
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+#: Longest wait for a primary rate-limit reset before giving up on a call.
+MAX_RATE_LIMIT_WAIT_S = 120.0
+_POLICY_MARKERS = (
+    "saml",
+    "sso",
+    "personal access token",
+    "oauth app access restrictions",
+    "forbids access",
+)
 
 
 class GitHubError(RuntimeError):
@@ -47,6 +56,16 @@ class GitHubError(RuntimeError):
         return self.status == 429 or (
             self.status == 403 and "rate limit" in self.message.lower()
         )
+
+    @property
+    def is_policy_block(self) -> bool:
+        """Whether an org policy (SAML SSO, token-type restriction) refused the call.
+
+        These are not "no push access": the token could read the repo if the
+        org allowed it, so they are reported as errors, never silently skipped.
+        """
+        msg = self.message.lower()
+        return self.status == 403 and any(s in msg for s in _POLICY_MARKERS)
 
 
 def resolve_token(token: str | None = None) -> str:
@@ -66,6 +85,15 @@ def resolve_token(token: str | None = None) -> str:
         "push access to each repo: a classic token with the `repo` and `read:org` "
         "scopes covers every owner you can push to."
     )
+
+
+def _retry_wait(headers, fallback: float) -> float:
+    """Seconds to wait: ``Retry-After``, else the rate-limit reset, else ``fallback``."""
+    if headers.get("Retry-After"):
+        return float(headers["Retry-After"])
+    if headers.get("x-ratelimit-remaining") == "0" and headers.get("x-ratelimit-reset"):
+        return max(1.0, float(headers["x-ratelimit-reset"]) - time.time())
+    return fallback
 
 
 def _request(
@@ -104,7 +132,9 @@ def _request(
             retryable = e.code in _RETRY_STATUSES or err.is_rate_limit
             if not retryable or attempt == retries:
                 raise err from None
-            wait = float(e.headers.get("Retry-After") or backoff_s * 2**attempt)
+            wait = _retry_wait(e.headers, backoff_s * 2**attempt)
+            if wait > MAX_RATE_LIMIT_WAIT_S:
+                raise err from None  # the quota resets too late for this run
         except (urllib.error.URLError, TimeoutError) as e:
             if attempt == retries:
                 raise GitHubError(0, str(e), path=path) from None
@@ -159,8 +189,11 @@ def make_graphql(
             retries=retries,
             backoff_s=backoff_s,
         )
-        if payload.get("errors") and not payload.get("data"):
-            raise GitHubError(200, str(payload["errors"]), path="/graphql")
+        errors = (payload or {}).get("errors")
+        if errors:  # partial data hides repos (SSO, restrictions): never drop it
+            limited = any(e.get("type") == "RATE_LIMITED" for e in errors)
+            messages = "; ".join(str(e.get("message", e)) for e in errors)
+            raise GitHubError(429 if limited else 200, messages, path="/graphql")
         return payload["data"]
 
     return graphql

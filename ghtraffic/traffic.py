@@ -6,7 +6,9 @@ uniques), while ``popular/referrers`` and ``popular/paths`` are 14-day
 aggregates with no daily breakdown, so those are stored as dated snapshots.
 
 Functions here are pure translations (payload in, rows out) plus thin fetchers
-that take a ``rest`` transport.
+that take a ``rest`` or ``graphql`` transport. Daily series and the popular
+aggregates are fetched separately, so a caller can take them at different
+cadences (and route popular rows to different tables).
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from collections import Counter
 from collections.abc import Iterator, Mapping
 from typing import Any
 
-from ghtraffic.github import GraphQL, Rest
+from ghtraffic.github import GitHubError, GraphQL, Rest
 
 DAILY_KINDS = ("views", "clones")
 SNAPSHOT_KINDS = ("referrers", "paths")
@@ -88,28 +90,30 @@ def path_rows(repo: str, payload: list, *, fetched: str) -> list[dict]:
     ]
 
 
-def fetch_repo_traffic(
-    repo: str, *, rest: Rest, fetched: str, snapshot: bool = True
-) -> dict[str, list[dict]]:
-    """Fetch one repo's traffic as ``{table_name: rows}``.
+def fetch_daily(repo: str, *, rest: Rest, fetched: str) -> dict[str, list[dict]]:
+    """Views and clones of one repo: daily rows, plus the 14-day window totals.
 
-    ``snapshot=False`` skips the two 14-day aggregate endpoints (referrers and
-    paths) and the window totals, so a run that does not owe a snapshot costs
-    two calls per repo instead of four.
+    Two calls. The window totals come free with the daily payloads; the caller
+    decides whether to keep them (they are stored only with a snapshot).
     """
     base = f"/repos/{repo}/traffic"
     out: dict[str, list[dict]] = {"windows": []}
     for kind in DAILY_KINDS:
-        payload = rest(f"{base}/{kind}?per=day")
+        payload = rest(f"{base}/{kind}?per=day") or {}
         out[kind] = daily_rows(repo, kind, payload)
-        if snapshot:
-            out["windows"].append(window_row(repo, kind, payload, fetched=fetched))
-    if snapshot:
-        out["referrers"] = referrer_rows(
-            repo, rest(f"{base}/popular/referrers"), fetched=fetched
-        )
-        out["paths"] = path_rows(repo, rest(f"{base}/popular/paths"), fetched=fetched)
+        out["windows"].append(window_row(repo, kind, payload, fetched=fetched))
     return out
+
+
+def fetch_popular(repo: str, *, rest: Rest, fetched: str) -> dict[str, list[dict]]:
+    """Top-10 referrers and paths of one repo over the last 14 days (two calls)."""
+    base = f"/repos/{repo}/traffic/popular"
+    return {
+        "referrers": referrer_rows(
+            repo, rest(f"{base}/referrers") or [], fetched=fetched
+        ),
+        "paths": path_rows(repo, rest(f"{base}/paths") or [], fetched=fetched),
+    }
 
 
 STARGAZERS_QUERY = """
@@ -130,8 +134,10 @@ def starred_dates(repo: str, *, graphql: GraphQL) -> Iterator[str]:
     after = None
     while True:
         data = graphql(STARGAZERS_QUERY, {"owner": owner, "name": name, "after": after})
+        if not (data or {}).get("repository"):
+            raise GitHubError(404, f"repository {repo} not found (renamed or deleted?)")
         conn = data["repository"]["stargazers"]
-        yield from (e["starredAt"][:10] for e in conn["edges"])
+        yield from (e["starredAt"][:10] for e in conn["edges"] if e.get("starredAt"))
         if not conn["pageInfo"]["hasNextPage"]:
             return
         after = conn["pageInfo"]["endCursor"]
@@ -156,3 +162,8 @@ def star_history_rows(repo: str, dates: list[str]) -> list[dict]:
             {"date": day, "repo": repo, "stars": total, "forks": "", "watchers": ""}
         )
     return rows
+
+
+def star_history(repo: str, *, graphql: GraphQL) -> list[dict]:
+    """A repo's star history rows (the default ``star_history=`` of ``collect``)."""
+    return star_history_rows(repo, list(starred_dates(repo, graphql=graphql)))

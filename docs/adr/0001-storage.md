@@ -34,7 +34,7 @@ Behaviour of the API that matters, checked against the live API on 2026-11-10: z
 
 **Run cadence: twice a week** (Mondays and Thursdays, 03:17 UTC, off the hour). Each day is seen 3 or 4 times inside its window, two missed runs in a row lose nothing, and it costs about 9 one-minute jobs a month. One job covers every owner; a matrix would bill a rounded-up minute per repo.
 
-**Star history** is rebuilt once per repo, on first sight, from each current stargazer's `starredAt` (GraphQL), as cumulative counts per day.
+**Star history** is rebuilt once per repo, from each current stargazer's `starredAt` (GraphQL), as cumulative counts per day. A `backfills` table records which repos are done, so a failed backfill is retried and a successful one is never repeated; `collect(star_history=...)` is the seam for a better source. In the `stars` log, rows of the same day merge field-wise (an empty backfilled value never erases a live one) and a row equal to its predecessor is dropped.
 
 **Store seam.** The tables are written through a `MutableMapping[str, str]` (relative path to text): a local folder by default (atomic writes), or any `dol` store.
 
@@ -51,9 +51,10 @@ Behaviour of the API that matters, checked against the live API on 2026-11-10: z
 
 - A repo's traffic before ghtraffic first saw it is unknown, not zero. `runs.csv` gives the coverage start; per-repo coverage (`first_seen`) is a follow-up.
 - Max cannot follow a genuine downward revision by GitHub; none has been reported except the edge artifact max exists to ignore.
+- Snapshot tiling trades robustness for addability: a snapshot run that is missed (a dropped cron, a failed call) delays the next one by 3 or 4 days, and the referrer and path data of those days is lost. Taking snapshots every 10 days would never lose data but windows would overlap and could no longer be summed. We keep 14 and accept the rare gap; daily series are not affected.
 - Referrers and paths are up to 14 days stale between snapshots. A `latest` table overwritten each run would fix that at the cost of two more calls per repo per run; a follow-up.
 - `starredAt` listing is limited to people with push access [16]. GitHub's newer star-history endpoint (2026-09-04) gives daily deltas back to creation without identities [14][15] and should replace it.
-- Size, for ~600 repos: a few MB a year in total; the dashboard reads one year file per table. A monthly rollup for the overview is a follow-up if load time suffers.
+- Size, for a few hundred repos: a few MB a year in total; the dashboard reads one year file per table. A monthly rollup for the overview is a follow-up if load time suffers.
 
 ## References
 

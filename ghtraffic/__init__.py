@@ -19,7 +19,6 @@ Main pieces:
 from ghtraffic.collect import RunReport, collect, write_manifest
 from ghtraffic.config import Settings, load_settings
 from ghtraffic.github import GitHubError, make_graphql, make_rest, resolve_token
-from ghtraffic.repos import list_repos
 from ghtraffic.scaffold import init_data_repo
 from ghtraffic.tables import TABLES, Files, TableSpec, merge_rows, read_table
 
@@ -32,7 +31,6 @@ __all__ = [
     "TableSpec",
     "collect",
     "init_data_repo",
-    "list_repos",
     "load_settings",
     "make_graphql",
     "make_rest",

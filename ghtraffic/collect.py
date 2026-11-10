@@ -12,26 +12,30 @@ listed in ``last_run.json``, never treated as a failure.
 from __future__ import annotations
 
 import json
+import logging
 import time
-from collections.abc import Callable, MutableMapping
+from collections.abc import Callable, Iterable, MutableMapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
+from functools import partial
 from datetime import date, datetime, timezone
 
-from ghtraffic.config import Settings
+from ghtraffic.config import DFLT_DATA_DIR, Settings
 from ghtraffic.github import GitHubError, GraphQL, Rest, make_graphql, make_rest
 from ghtraffic.repos import list_repos
 from ghtraffic.tables import (
     MANIFEST_KEY,
     SCHEMA_VERSION,
     TABLES,
+    Files,
     read_table,
     table_files,
     write_rows,
 )
-from ghtraffic.traffic import fetch_repo_traffic, star_history_rows, starred_dates
+from ghtraffic.traffic import fetch_daily, fetch_popular, star_history
 
 LAST_RUN_KEY = "last_run.json"
+_log = logging.getLogger("ghtraffic")
 #: HTTP statuses meaning "this token cannot read this repo's traffic".
 NO_ACCESS_STATUSES = frozenset({401, 403, 404})
 
@@ -96,16 +100,45 @@ def write_manifest(store: MutableMapping, *, updated: str) -> dict:
     return manifest
 
 
+def _safely(fn: Callable, repo: str):
+    """``(repo, fn(repo), None)``, or ``(repo, None, error)``: one repo never sinks a run."""
+    try:
+        return repo, fn(repo), None
+    except Exception as e:  # noqa: BLE001 - any failure is recorded per repo
+        return repo, None, e
+
+
+def _repo_row(r: dict, last_seen: str) -> dict:
+    return {
+        **{c: r.get(c, "") for c in TABLES["repos"].columns},
+        "last_seen": last_seen,
+    }
+
+
 def collect(
     settings: Settings,
     *,
-    store: MutableMapping,
+    store: MutableMapping | None = None,
     rest: Rest | None = None,
     graphql: GraphQL | None = None,
+    list_repos: Callable[..., Iterable[dict]] = list_repos,
+    star_history: Callable[..., list[dict]] = star_history,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
-    log: Callable[[str], None] = print,
+    log: Callable[[str], None] = _log.info,
 ) -> RunReport:
-    """Run one collection into ``store`` and return its report."""
+    """Run one collection into ``store`` and return its report.
+
+    Args:
+        settings: what to collect (:func:`~ghtraffic.config.load_settings`).
+        store: where the history lives; default ``~/.local/share/ghtraffic/data``.
+        rest, graphql: GitHub transports; default urllib with an env token.
+        list_repos: ``(owners, *, graphql, rest, exclude, include_forks,
+            include_archived, on_error) -> records`` with the keys of
+            :data:`~ghtraffic.repos.REPO_FIELDS`.
+        star_history: ``(repo, *, graphql) -> stars rows``, for the backfill.
+        now: the clock; log: where the one-line summary goes.
+    """
+    store = Files(DFLT_DATA_DIR) if store is None else store
     rest = rest or make_rest()
     graphql = graphql or make_graphql()
     t0 = time.monotonic()
@@ -113,10 +146,10 @@ def collect(
     today = started.date()
     fetched = today.isoformat()
     report = RunReport(started_at=started.isoformat(timespec="seconds"))
+    workers = max(1, settings.max_workers)
 
     def on_owner_error(owner: str, e: Exception) -> None:
         report.owner_errors[owner] = str(e)
-        log(f"ghtraffic: could not list {owner}: {e}")
 
     repos = list(
         list_repos(
@@ -130,30 +163,35 @@ def collect(
         )
     )
     report.repos_listed = len(repos)
-
-    # metadata and star snapshots: free, they came with the listing
     rows: dict[str, list[dict]] = {name: [] for name in TABLES}
-    rows["repos"] = [{**r, "last_seen": fetched} for r in repos]
-    rows["stars"] = [
+    rows["repos"] = [_repo_row(r, fetched) for r in repos]
+
+    # star history first, so today's live values (below) win a same-day merge
+    if settings.backfill_stars:
+        done = {
+            r["repo"]
+            for r in read_table(store, TABLES["backfills"])
+            if r["kind"] == "stars"
+        }
+        todo = [
+            r["repo"]
+            for r in repos
+            if r["stars"] and r["can_push"] and r["repo"] not in done
+        ]
+        backfill = partial(star_history, graphql=graphql)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for repo, got, err in pool.map(lambda r: _safely(backfill, r), todo):
+                if err is not None:
+                    report.errors[repo] = f"star backfill: {err}"  # retried next run
+                else:
+                    rows["stars"] += got
+                    rows["backfills"].append(
+                        {"repo": repo, "kind": "stars", "date": fetched}
+                    )
+    rows["stars"] += [
         {"date": fetched, **{k: r[k] for k in ("repo", "stars", "forks", "watchers")}}
         for r in repos
     ]
-    if settings.backfill_stars:
-        known = {r["repo"] for r in read_table(store, TABLES["stars"])}
-        todo = [r["repo"] for r in repos if r["stars"] and r["repo"] not in known]
-
-        def backfill(repo: str):
-            try:
-                return repo, list(starred_dates(repo, graphql=graphql)), None
-            except GitHubError as e:
-                return repo, None, e
-
-        with ThreadPoolExecutor(max_workers=max(1, settings.max_workers)) as pool:
-            for repo, dates, err in pool.map(backfill, todo):
-                if err is not None:
-                    report.errors[repo] = f"star backfill: {err}"
-                else:
-                    rows["stars"] += star_history_rows(repo, dates)
 
     # traffic: only where the token can push
     readable = [r["repo"] for r in repos if r["can_push"]]
@@ -164,25 +202,24 @@ def collect(
         for repo in readable
     }
 
-    def fetch(repo: str):
-        try:
-            return (
-                repo,
-                fetch_repo_traffic(
-                    repo, rest=rest, fetched=fetched, snapshot=due[repo]
-                ),
-                None,
-            )
-        except GitHubError as e:
-            return repo, None, e
+    def fetch(repo: str) -> dict[str, list[dict]]:
+        got = fetch_daily(repo, rest=rest, fetched=fetched)
+        if not due[repo]:
+            got.pop("windows")
+            return got
+        return {**got, **fetch_popular(repo, rest=rest, fetched=fetched)}
 
-    with ThreadPoolExecutor(max_workers=max(1, settings.max_workers)) as pool:
-        for repo, got, err in pool.map(fetch, readable):
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for repo, got, err in pool.map(lambda r: _safely(fetch, r), readable):
             if err is not None:
-                if err.status in NO_ACCESS_STATUSES and not err.is_rate_limit:
+                if (
+                    isinstance(err, GitHubError)
+                    and err.status in NO_ACCESS_STATUSES
+                    and not (err.is_rate_limit or err.is_policy_block)
+                ):
                     report.no_access.append(repo)
                 else:
-                    report.errors[repo] = str(err)
+                    report.errors[repo] = f"{type(err).__name__}: {err}"
                 continue
             report.repos_collected += 1
             report.snapshots += bool(due[repo])
@@ -214,6 +251,11 @@ def collect(
     write_manifest(store, updated=fetched)
     log(report.summary())
     return report
+
+
+def has_private_data(store: MutableMapping) -> bool:
+    """Whether the history holds anything about a private repo."""
+    return any(r["private"] == "true" for r in read_table(store, TABLES["repos"]))
 
 
 def window_days(store: MutableMapping) -> dict[str, int]:
