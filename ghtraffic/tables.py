@@ -327,6 +327,7 @@ def merge_rows(spec: TableSpec, old: list[dict], new: list[dict]) -> list[dict]:
             merged[key(r)] = {
                 c: r[c] if r[c] != "" else prev.get(c, "") for c in spec.columns
             }
+
         def entity(r):
             return tuple(str(r[c]) for c in spec.entity)
 
