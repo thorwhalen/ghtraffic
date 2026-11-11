@@ -25,11 +25,20 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Install ghtraffic
+      shell: bash
+      run: |
+        set -euo pipefail
+        # ghtraffic needs Python 3.11+ (tomllib) and csvledger (stdlib only).
+        python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' || {
+          echo "::error::ghtraffic needs Python 3.11+; add actions/setup-python before this step."; exit 1; }
+        python3 -m venv "$RUNNER_TEMP/ghtraffic-venv"
+        "$RUNNER_TEMP/ghtraffic-venv/bin/pip" install --quiet "$GITHUB_ACTION_PATH"
+
     - name: Collect and commit
       shell: bash
       env:
         GHTRAFFIC_TOKEN: ${{ inputs.token }}
-        PYTHONPATH: ${{ github.action_path }}
         DATA_DIR: ${{ inputs.data-dir }}
         CONFIG: ${{ inputs.config }}
         COMMIT: ${{ inputs.commit }}
@@ -37,20 +46,16 @@ runs:
         FAIL_ON_ERRORS: ${{ inputs.fail-on-errors }}
       run: |
         set -euo pipefail
-        # ghtraffic needs only the standard library, but Python 3.11+ (tomllib).
-        python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' || {
-          echo "::error::ghtraffic needs Python 3.11+; add actions/setup-python before this step."; exit 1; }
-
         args=(collect --data-dir "$DATA_DIR")
         [ -n "$CONFIG" ] && args+=(--config "$CONFIG")
         [ "$FAIL_ON_ERRORS" = "true" ] && args+=(--fail-on-errors)
         status=0
-        python3 -m ghtraffic "${args[@]}" || status=$?
+        "$RUNNER_TEMP/ghtraffic-venv/bin/python" -m ghtraffic "${args[@]}" || status=$?
         [ "$COMMIT" = "true" ] || exit $status
 
         # Never put private repos' data into a public repository.
         if [ "$ALLOW_PUBLIC" != "true" ]; then
-          python3 -m ghtraffic guard --data-dir "$DATA_DIR" --repo "$GITHUB_REPOSITORY"
+          "$RUNNER_TEMP/ghtraffic-venv/bin/python" -m ghtraffic guard --data-dir "$DATA_DIR" --repo "$GITHUB_REPOSITORY"
         fi
 
         git config user.name "github-actions[bot]"
@@ -66,7 +71,7 @@ runs:
           git push -q && exit $status
           git fetch -q origin "$GITHUB_REF_NAME"
           git reset -q --hard "origin/$GITHUB_REF_NAME"
-          python3 -m ghtraffic "${args[@]}" || status=$?
+          "$RUNNER_TEMP/ghtraffic-venv/bin/python" -m ghtraffic "${args[@]}" || status=$?
           commit
         done
         echo "::error::could not push after 3 attempts"; exit 1
