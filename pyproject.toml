@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ghtraffic"
-version = "0.0.4"
+version = "0.0.5"
 description = "Collect, accumulate and explore GitHub traffic and insights (views, clones, referrers, paths, stars) across all your repos and orgs, with a GitHub Action and a static dashboard."
 readme = "README.md"
 requires-python = ">=3.11"
