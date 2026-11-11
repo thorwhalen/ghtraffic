@@ -356,3 +356,35 @@ def test_demo_is_a_complete_data_dir(tmp_path):
     m = make_demo_data(Files(tmp_path), n_days=30)
     assert (tmp_path / "last_run.json").exists()
     assert all(m["tables"][t]["files"] for t in ("views", "clones", "stars", "repos"))
+
+
+def test_change_only_on_any_entity():
+    """A change-only table can track any entity, not only a repo."""
+    from ghtraffic import TableSpec, merge_rows
+
+    spec = TableSpec(
+        "metrics",
+        ("date", "platform", "package", "metric", "value"),
+        key=("date", "platform", "package", "metric"),
+        merge="change_only",
+        entity=("platform", "package", "metric"),
+        int_columns=("value",),
+    )
+    rows = [
+        {"date": d, "platform": "pypi", "package": "p", "metric": m, "value": v}
+        for d, m, v in [
+            ("2026-01-01", "dependents", 3),
+            ("2026-01-08", "dependents", 3),  # unchanged: dropped
+            ("2026-01-08", "versions", 3),  # another entity, same value: kept
+            ("2026-01-15", "dependents", 4),
+        ]
+    ]
+    kept = merge_rows(spec, [], rows)
+    assert [(r["date"], r["metric"]) for r in kept] == [
+        ("2026-01-01", "dependents"),
+        ("2026-01-15", "dependents"),
+        ("2026-01-08", "versions"),
+    ]
+    assert merge_rows(spec, kept, rows) == kept
+    with pytest.raises(ValueError):
+        TableSpec("x", ("date", "a"), key=("date", "a"), merge="change_only", entity=())

@@ -17,8 +17,8 @@ result (idempotent) and the order of runs does not matter for daily series:
 - ``replace_group``: rows of a snapshot (one repo, one fetch date) replace any
   earlier rows of the same group, so a same-day re-run leaves no stale rows.
 - ``change_only``: a row is stored only when its values differ from the
-  repo's previous row (stars and forks change rarely; daily copies would be
-  noise).
+  previous row of the same entity (``TableSpec.entity``, the repo by default):
+  stars and forks change rarely, and daily copies would be noise.
 - ``upsert``: upsert by key, the new row wins (current repo metadata).
 """
 
@@ -48,12 +48,24 @@ class TableSpec:
     int_columns: tuple[str, ...] = ()
     time_column: str | None = None  # partition by its year when set
     group: tuple[str, ...] = ()  # for 'replace_group'
+    entity: tuple[str, ...] = ("repo",)  # for 'change_only': what a row tracks
     description: str = ""
     sort: tuple[str, ...] = field(default=())
 
     def __post_init__(self):
-        if self.merge == "change_only" and self.time_column is not None:
-            raise ValueError("A 'change_only' table cannot be partitioned by time.")
+        if self.merge == "change_only":
+            if self.time_column is not None:
+                raise ValueError("A 'change_only' table cannot be partitioned by time.")
+            if len([c for c in self.key if c not in self.entity]) != 1:
+                raise ValueError(
+                    "A 'change_only' table's key must be its entity columns "
+                    f"plus one date column; got key={self.key}, entity={self.entity}."
+                )
+
+    @property
+    def change_column(self) -> str:
+        """For 'change_only': the key column that orders an entity's rows (a date)."""
+        return next(c for c in self.key if c not in self.entity)
 
     @property
     def sort_columns(self) -> tuple[str, ...]:
@@ -315,11 +327,15 @@ def merge_rows(spec: TableSpec, old: list[dict], new: list[dict]) -> list[dict]:
             merged[key(r)] = {
                 c: r[c] if r[c] != "" else prev.get(c, "") for c in spec.columns
             }
+        def entity(r):
+            return tuple(str(r[c]) for c in spec.entity)
+
         kept, last_values = [], {}
-        for r in sorted(merged.values(), key=lambda r: (r["repo"], str(r["date"]))):
-            if last_values.get(r["repo"]) != _values(spec, r):
+        when = spec.change_column
+        for r in sorted(merged.values(), key=lambda r: (entity(r), str(r[when]))):
+            if last_values.get(entity(r)) != _values(spec, r):
                 kept.append(r)
-                last_values[r["repo"]] = _values(spec, r)
+                last_values[entity(r)] = _values(spec, r)
         return kept
 
     raise ValueError(f"Unknown merge policy {spec.merge!r} for table {spec.name!r}")
