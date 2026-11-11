@@ -48,7 +48,9 @@ jobs:
 
       - name: Generate the synthetic demo data
         working-directory: .
-        run: PYTHONPATH=. python -m ghtraffic demo --data-dir dashboard/public/demo
+        run: |
+          python -m pip install --quiet .
+          python -m ghtraffic demo --data-dir dashboard/public/demo
 
       - name: Install
         run: npm ci

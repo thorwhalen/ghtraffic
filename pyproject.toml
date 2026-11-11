@@ -15,7 +15,7 @@ keywords = ["github", "traffic", "analytics", "insights", "github-actions", "das
 authors = [
     { name = "Thor Whalen" },
 ]
-dependencies = []
+dependencies = ["csvledger>=0.0.2,<0.1"]
 
 [project.scripts]
 ghtraffic = "ghtraffic.__main__:main"

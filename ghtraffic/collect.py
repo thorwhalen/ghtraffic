@@ -20,6 +20,8 @@ from dataclasses import asdict, dataclass, field
 from functools import partial
 from datetime import date, datetime, timezone
 
+import csvledger
+
 from ghtraffic.config import DFLT_DATA_DIR, Settings
 from ghtraffic.github import GitHubError, GraphQL, Rest, make_graphql, make_rest
 from ghtraffic.repos import list_repos
@@ -81,23 +83,9 @@ def _snapshot_due(last: str | None, today: date, every_days: int) -> bool:
 
 def write_manifest(store: MutableMapping, *, updated: str) -> dict:
     """Write ``manifest.json``: the schema and the files of every table."""
-    manifest = {
-        "schema_version": SCHEMA_VERSION,
-        "updated": updated,
-        "tables": {
-            name: {
-                "files": table_files(store, spec),
-                "columns": list(spec.columns),
-                "key": list(spec.key),
-                "description": spec.description,
-            }
-            for name, spec in TABLES.items()
-        },
-    }
-    text = json.dumps(manifest, indent=2) + "\n"
-    if store.get(MANIFEST_KEY) != text:
-        store[MANIFEST_KEY] = text
-    return manifest
+    return csvledger.write_manifest(
+        store, TABLES, key=MANIFEST_KEY, schema_version=SCHEMA_VERSION, updated=updated
+    )
 
 
 def _safely(fn: Callable, repo: str):
