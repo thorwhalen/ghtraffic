@@ -90,6 +90,7 @@ Plain CSV, one table per kind, split by year, sorted by date so each run adds li
 |---|---|
 | `views/YYYY.csv`, `clones/YYYY.csv` | `date,repo,count,uniques`: one per repo and day with any traffic (no row means zero) |
 | `windows/YYYY.csv` | `fetched,repo,kind,count,uniques`: 14-day totals at each snapshot, the only true 14-day unique counts |
+| `popular_latest.csv` | `fetched,repo,kind,name,title,count,uniques`: the same top 10 (kind `referrer` or `path`), replaced per repo on every run, so the dashboard's "now" is at most a day old; costs two more API calls per repo per run |
 | `referrers/YYYY.csv`, `paths/YYYY.csv` | the top 10 over the 14 days before `fetched`; snapshots are 14 days apart, so they never overlap |
 | `stars.csv` | `date,repo,stars,forks,watchers`: a row only when something changed |
 | `repos.csv` | current metadata of every repo seen |

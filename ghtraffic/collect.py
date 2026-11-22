@@ -34,7 +34,12 @@ from ghtraffic.tables import (
     table_files,
     write_rows,
 )
-from ghtraffic.traffic import fetch_daily, fetch_popular, star_history
+from ghtraffic.traffic import (
+    fetch_daily,
+    fetch_popular,
+    popular_latest_rows,
+    star_history,
+)
 
 LAST_RUN_KEY = "last_run.json"
 _log = logging.getLogger("ghtraffic")
@@ -214,10 +219,12 @@ def collect(
 
     def fetch(repo: str) -> dict[str, list[dict]]:
         got = fetch_daily(repo, rest=rest, fetched=fetched)
+        popular = fetch_popular(repo, rest=rest, fetched=fetched)
+        got["popular_latest"] = popular_latest_rows(popular)  # every run
         if not due[repo]:
             got.pop("windows")
             return got
-        return {**got, **fetch_popular(repo, rest=rest, fetched=fetched)}
+        return {**got, **popular}
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for repo, got, err in pool.map(lambda r: _safely(fetch, r), readable):

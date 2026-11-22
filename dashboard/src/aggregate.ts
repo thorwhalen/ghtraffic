@@ -14,7 +14,7 @@
 import { addDays, daysBetween, eachDay, monthEnd, monthStart, weekStart } from "./dates";
 import { MAX_OWNER_SERIES, TOP_REPOS, type Filters } from "./filters";
 import type { Dataset } from "./load";
-import type { PathRow, ReferrerRow, RepoRow, WindowRow } from "./schema";
+import type { PathRow, PopularLatestRow, ReferrerRow, RepoRow, WindowRow } from "./schema";
 
 export type Kind = "views" | "clones";
 export type Measure = "count" | "uniques";
@@ -72,6 +72,13 @@ export interface Index {
   windows: Map<string, WindowRow[]>;
   referrers: Snapshots<ReferrerRow>;
   paths: Snapshots<PathRow>;
+  /**
+   * The same two, plus the `popular_latest` rows (refreshed every run), for "now":
+   * a repo's newest window is whichever of snapshot and latest is newer. The
+   * "as of" picker lists only `referrers`/`paths` dates.
+   */
+  referrersNow: Snapshots<ReferrerRow>;
+  pathsNow: Snapshots<PathRow>;
 }
 
 // ------------------------------------------------------------------- index
@@ -100,6 +107,19 @@ function repoInfos(rows: RepoRow[], seen: Iterable<string>): Map<string, RepoInf
     }
   }
   return out;
+}
+
+/** `popular_latest` rows of one kind, shaped as the snapshot rows they stand in for. */
+function latestRows(rows: PopularLatestRow[], kind: "referrer"): ReferrerRow[];
+function latestRows(rows: PopularLatestRow[], kind: "path"): PathRow[];
+function latestRows(rows: PopularLatestRow[], kind: "referrer" | "path"): (ReferrerRow | PathRow)[] {
+  return rows
+    .filter((r) => r.kind === kind)
+    .map((r) =>
+      kind === "referrer"
+        ? { fetched: r.fetched, repo: r.repo, referrer: r.name, count: r.count, uniques: r.uniques }
+        : { fetched: r.fetched, repo: r.repo, path: r.name, title: r.title, count: r.count, uniques: r.uniques },
+    );
 }
 
 /** Group snapshot rows by repo then fetched date. */
@@ -208,6 +228,8 @@ export function buildIndex(ds: Dataset): Index {
     windows,
     referrers: bySnapshot(tables.referrers),
     paths: bySnapshot(tables.paths),
+    referrersNow: bySnapshot([...tables.referrers, ...latestRows(tables.popular_latest, "referrer")]),
+    pathsNow: bySnapshot([...tables.paths, ...latestRows(tables.popular_latest, "path")]),
   };
 }
 
@@ -579,10 +601,10 @@ function topFromSnapshots<R extends { repo: string; count: number | null; unique
 }
 
 export const topReferrers = (idx: Index, repos: string[], asOf: string, n = 10): TopResult =>
-  topFromSnapshots(idx.referrers, repos, asOf, (r) => r.referrer, (r) => r.referrer, n);
+  topFromSnapshots(idx.referrersNow, repos, asOf, (r) => r.referrer, (r) => r.referrer, n);
 
 export const topPaths = (idx: Index, repos: string[], asOf: string, n = 10): TopResult =>
-  topFromSnapshots(idx.paths, repos, asOf, (r) => r.path, (r) => r.path, n);
+  topFromSnapshots(idx.pathsNow, repos, asOf, (r) => r.path, (r) => r.path, n);
 
 /** Snapshot dates available for the selection, newest first (for the "as of" picker). */
 export function snapshotDates(idx: Index, repos: string[], upTo: string): string[] {

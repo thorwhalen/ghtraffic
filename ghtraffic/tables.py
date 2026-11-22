@@ -9,6 +9,8 @@ re-exported here so ``from ghtraffic.tables import Files`` keeps working.
   grow as the day completes, so the fullest count wins whichever run saw it.
 - ``windows``, ``referrers``, ``paths``: 14-day snapshots, ``replace_group``
   per (fetch date, repo), so a same-day re-run leaves no stale rows.
+- ``popular_latest``: the same referrers and paths as one table, ``replace_group``
+  per repo and written on every run, for the dashboard's "now".
 - ``stars``: ``change_only`` per repo: stars and forks change rarely.
 - ``repos``, ``backfills``, ``runs``: ``upsert``. A repo's ``first_seen`` is the
   one column that keeps its oldest value (:func:`ghtraffic.collect._repo_row`
@@ -98,6 +100,17 @@ TABLES: dict[str, TableSpec] = {
             int_columns=("count", "uniques"),
             time_column="fetched",
             description="Top-10 content paths over the 14 days before `fetched`.",
+        ),
+        TableSpec(
+            "popular_latest",
+            ("fetched", "repo", "kind", "name", "title", "count", "uniques"),
+            key=("repo", "kind", "name"),
+            merge="replace_group",
+            group=("repo",),
+            int_columns=("count", "uniques"),
+            description="Top-10 referrers (kind `referrer`) and paths (kind `path`) "
+            "over the 14 days before `fetched`, replaced per repo on every run, so "
+            "'now' is never more than a day old (the snapshot tables are fortnightly).",
         ),
         TableSpec(
             "stars",

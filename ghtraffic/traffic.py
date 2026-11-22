@@ -116,6 +116,23 @@ def fetch_popular(repo: str, *, rest: Rest, fetched: str) -> dict[str, list[dict
     }
 
 
+def popular_latest_rows(popular: dict[str, list[dict]]) -> list[dict]:
+    """``popular_latest`` rows from :func:`fetch_popular`'s referrers and paths.
+
+    >>> rows = popular_latest_rows({"referrers": [{"fetched": "d", "repo": "a/b", "referrer": "x.com", "count": 3, "uniques": 2}], "paths": []})
+    >>> [(r["kind"], r["name"], r["count"]) for r in rows]
+    [('referrer', 'x.com', 3)]
+    """
+    common = ("fetched", "repo", "count", "uniques")
+    return [
+        {**{k: r[k] for k in common}, "kind": "referrer", "name": r["referrer"], "title": ""}
+        for r in popular.get("referrers", [])
+    ] + [
+        {**{k: r[k] for k in common}, "kind": "path", "name": r["path"], "title": r.get("title", "")}
+        for r in popular.get("paths", [])
+    ]
+
+
 STARGAZERS_QUERY = """
 query($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
