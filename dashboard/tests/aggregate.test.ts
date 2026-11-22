@@ -111,6 +111,19 @@ describe("ranges and growth", () => {
     expect(covered).toEqual([false, false, true, true]);
     expect(maskUncovered([1, 2, 3, 4], covered)).toEqual([null, null, 3, 4]);
   });
+  it("treats days before a repo's first_seen as gaps, not zeros", () => {
+    const weeks = makeBuckets({ start: "2026-02-09", end: "2026-03-08" }, "week");
+    const late = { ...idx, repos: new Map(idx.repos) };
+    const some = [...late.repos.keys()][0];
+    late.repos.set(some, { ...late.repos.get(some)!, firstSeen: "2026-03-10" });
+    // 14 days before Mar 10 is Feb 24: the bucket ending Feb 22 is before it
+    expect(bucketCovered(late, "views", weeks, [some])).toEqual([false, false, true, true]);
+    const unknown = { ...idx, repos: new Map(idx.repos) };
+    unknown.repos.set(some, { ...unknown.repos.get(some)!, firstSeen: "" });
+    expect(bucketCovered(unknown, "views", weeks, [some])).toEqual(bucketCovered(idx, "views", weeks));
+    late.repos.set(some, { ...late.repos.get(some)!, firstSeen: "2026-04-01" });
+    expect(bucketCovered(late, "views", weeks, [some])).toEqual([false, false, false, false]);
+  });
   it("computes growth %, and refuses to invent it", () => {
     const r = { start: "2026-03-08", end: "2026-03-14" };
     expect(growth(150, 100, r, "2026-01-01")).toEqual({ pct: 50 });

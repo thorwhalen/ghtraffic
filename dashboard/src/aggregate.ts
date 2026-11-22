@@ -27,6 +27,8 @@ export interface RepoInfo {
   archived: boolean;
   language: string;
   description: string;
+  /** Day collection of this repo began; "" when unknown (older data). */
+  firstSeen: string;
 }
 
 interface DayValue {
@@ -89,11 +91,12 @@ function repoInfos(rows: RepoRow[], seen: Iterable<string>): Map<string, RepoInf
       archived: r.archived,
       language: r.language,
       description: r.description,
+      firstSeen: r.first_seen,
     });
   }
   for (const repo of seen) {
     if (!out.has(repo)) {
-      out.set(repo, { repo, owner: repo.split("/")[0], private: false, fork: false, archived: false, language: "", description: "" });
+      out.set(repo, { repo, owner: repo.split("/")[0], private: false, fork: false, archived: false, language: "", description: "", firstSeen: "" });
     }
   }
   return out;
@@ -327,9 +330,23 @@ function dayToBucket(buckets: Bucket[]): Map<string, number> {
 
 // ------------------------------------------------------------------- traffic series
 
-/** For each bucket: did the collector see at least one of its days? */
-export const bucketCovered = (idx: Pick<Index, "covered">, kind: Kind, buckets: Bucket[]): boolean[] =>
-  buckets.map((b) => eachDay(b.start, b.end).some((d) => idx.covered[kind].has(d)));
+/**
+ * For each bucket: did the collector see at least one of its days? With `repos`,
+ * only those repos count: a repo's traffic before its `first_seen` (less the
+ * 14 days GitHub reports back from the first run) was never collected, so a
+ * bucket only such repos could fill is a gap, not a zero. A repo with no
+ * `first_seen` (older data) counts as collected throughout.
+ */
+export const bucketCovered = (
+  idx: Pick<Index, "covered"> & Partial<Pick<Index, "repos">>,
+  kind: Kind,
+  buckets: Bucket[],
+  repos?: readonly string[],
+): boolean[] => {
+  const starts = repos && idx.repos ? repos.map((r) => idx.repos!.get(r)?.firstSeen ?? "") : [];
+  const from = starts.length && starts.every(Boolean) ? addDays(starts.reduce((a, b) => (a < b ? a : b)), -GITHUB_WINDOW_DAYS) : "";
+  return buckets.map((b) => (!from || b.end >= from) && eachDay(b.start, b.end).some((d) => idx.covered[kind].has(d)));
+};
 
 /** Replace values of never-collected buckets with null (drawn as a gap). */
 export const maskUncovered = (values: number[], covered: boolean[]): (number | null)[] =>

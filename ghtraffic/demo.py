@@ -168,6 +168,7 @@ def make_demo_data(
                     "pushed_at": today.isoformat() + "T00:00:00Z",
                     "description": f"Demo repository {name}",
                     "last_seen": today.isoformat(),
+                    "first_seen": days[0].isoformat(),
                 }
             )
     rows["runs"] = [

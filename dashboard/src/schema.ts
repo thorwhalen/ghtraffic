@@ -23,7 +23,7 @@ export const TABLE_COLUMNS = {
   "paths": ["fetched", "repo", "path", "title", "count", "uniques"],
   "stars": ["date", "repo", "stars", "forks", "watchers"],
   "backfills": ["repo", "kind", "date"],
-  "repos": ["repo", "owner", "private", "fork", "archived", "can_push", "language", "created_at", "pushed_at", "description", "last_seen"],
+  "repos": ["repo", "owner", "private", "fork", "archived", "can_push", "language", "created_at", "pushed_at", "description", "last_seen", "first_seen"],
   "runs": ["started_at", "duration_s", "repos_listed", "repos_collected", "repos_no_access", "snapshots", "errors"]
 } as const;
 
@@ -50,6 +50,7 @@ export const COLUMN_KINDS = {
   date: "date",
   fetched: "date",
   last_seen: "str",
+  first_seen: "str",
   repo: "str",
   owner: "str",
   kind: "str",
