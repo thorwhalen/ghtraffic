@@ -172,9 +172,7 @@ def collect(
     report.repos_listed = len(repos)
     rows: dict[str, list[dict]] = {name: [] for name in TABLES}
     known_first = _first_seen(store, today)
-    rows["repos"] = [
-        _repo_row(r, fetched, known_first.get(r["repo"])) for r in repos
-    ]
+    rows["repos"] = [_repo_row(r, fetched, known_first.get(r["repo"])) for r in repos]
 
     # star history first, so today's live values (below) win a same-day merge
     if settings.backfill_stars:
