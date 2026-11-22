@@ -125,10 +125,20 @@ def popular_latest_rows(popular: dict[str, list[dict]]) -> list[dict]:
     """
     common = ("fetched", "repo", "count", "uniques")
     return [
-        {**{k: r[k] for k in common}, "kind": "referrer", "name": r["referrer"], "title": ""}
+        {
+            **{k: r[k] for k in common},
+            "kind": "referrer",
+            "name": r["referrer"],
+            "title": "",
+        }
         for r in popular.get("referrers", [])
     ] + [
-        {**{k: r[k] for k in common}, "kind": "path", "name": r["path"], "title": r.get("title", "")}
+        {
+            **{k: r[k] for k in common},
+            "kind": "path",
+            "name": r["path"],
+            "title": r.get("title", ""),
+        }
         for r in popular.get("paths", [])
     ]
 
