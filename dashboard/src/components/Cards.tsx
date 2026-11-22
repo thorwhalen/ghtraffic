@@ -130,14 +130,14 @@ export function MainChart({ view }: { view: View }) {
       series.filter((s) => !s.other).map((s) => s.key),
       f.group === "owner" ? idx.ownerRank : idx.repoRank,
     );
-    const covered = bucketCovered(idx, f.kind, buckets);
+    const covered = bucketCovered(idx, f.kind, buckets, repos);
     return series.map((s) => ({
       key: s.key,
       label: s.label,
       values: maskUncovered(s.values, covered),
       color: s.other ? OTHER_COLOR : slotColor(slots.get(s.key) ?? 0),
     }));
-  }, [series, f.group, f.kind, idx, buckets]);
+  }, [series, f.group, f.kind, idx, buckets, repos]);
 
   const metric = metricLabel(f.kind, f.measure);
   const table: TableSpec = {

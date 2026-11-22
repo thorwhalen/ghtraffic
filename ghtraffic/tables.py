@@ -10,7 +10,9 @@ re-exported here so ``from ghtraffic.tables import Files`` keeps working.
 - ``windows``, ``referrers``, ``paths``: 14-day snapshots, ``replace_group``
   per (fetch date, repo), so a same-day re-run leaves no stale rows.
 - ``stars``: ``change_only`` per repo: stars and forks change rarely.
-- ``repos``, ``backfills``, ``runs``: ``upsert``.
+- ``repos``, ``backfills``, ``runs``: ``upsert``. A repo's ``first_seen`` is the
+  one column that keeps its oldest value (:func:`ghtraffic.collect._repo_row`
+  carries it over, since ``upsert`` lets the new row win).
 """
 
 from __future__ import annotations
@@ -130,10 +132,13 @@ TABLES: dict[str, TableSpec] = {
                 "pushed_at",
                 "description",
                 "last_seen",
+                "first_seen",
             ),
             key=("repo",),
             merge="upsert",
-            description="Current metadata of every repo seen (kept after deletion).",
+            description="Current metadata of every repo seen (kept after deletion); "
+            "`first_seen` is the day collection of the repo began (never moves later), "
+            "so a day before it is 'not collected', not zero.",
         ),
         TableSpec(
             "runs",

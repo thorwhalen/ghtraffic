@@ -20,7 +20,7 @@ function TrafficChart({ view, repo, kind }: { view: View; repo: string; kind: "v
   const { idx, range, gran } = view;
   const buckets = useMemo(() => makeBuckets(range, gran), [range, gran]);
   // Never-collected buckets become null: drawn as a gap, listed as "—".
-  const covered = useMemo(() => bucketCovered(idx, kind, buckets), [idx, kind, buckets]);
+  const covered = useMemo(() => bucketCovered(idx, kind, buckets, [repo]), [idx, kind, buckets, repo]);
   const total = useMemo(() => maskUncovered(repoSeries(idx, repo, kind, "count", buckets), covered), [idx, repo, kind, buckets, covered]);
   const uniq = useMemo(() => maskUncovered(repoSeries(idx, repo, kind, "uniques", buckets), covered), [idx, repo, kind, buckets, covered]);
   const series = [

@@ -49,7 +49,7 @@ Behaviour of the API that matters, checked against the live API on 2026-11-10: z
 
 ## Consequences
 
-- A repo's traffic before ghtraffic first saw it is unknown, not zero. `runs.csv` gives the coverage start; per-repo coverage (`first_seen`) is a follow-up.
+- A repo's traffic before ghtraffic first saw it is unknown, not zero. `runs.csv` gives the coverage start; per-repo coverage is `repos.first_seen`, which the dashboard uses to draw earlier days as gaps.
 - Max cannot follow a genuine downward revision by GitHub; none has been reported except the edge artifact max exists to ignore.
 - Snapshot tiling trades robustness for addability: a snapshot run that is missed (a dropped cron, a failed call) delays the next one by 3 or 4 days, and the referrer and path data of those days is lost. Taking snapshots every 10 days would never lose data but windows would overlap and could no longer be summed. We keep 14 and accept the rare gap; daily series are not affected.
 - Referrers and paths are up to 14 days stale between snapshots. A `latest` table overwritten each run would fix that at the cost of two more calls per repo per run; a follow-up.

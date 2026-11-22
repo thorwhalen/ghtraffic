@@ -96,10 +96,29 @@ def _safely(fn: Callable, repo: str):
         return repo, None, e
 
 
-def _repo_row(r: dict, last_seen: str) -> dict:
+def _first_seen(store: MutableMapping, today: date) -> dict[str, str]:
+    """When collection of each known repo began: the oldest ``first_seen`` on record.
+
+    A repo recorded before the column existed has none: its earliest snapshot day
+    stands in (the earliest data we can prove we held), else nothing, and the
+    caller then uses today.
+    """
+    first: dict[str, str] = {}
+    for r in read_table(store, TABLES["repos"]):
+        if r.get("first_seen"):
+            first[r["repo"]] = str(r["first_seen"])
+    years = {str(today.year), str(today.year - 1)}
+    for r in read_table(store, TABLES["windows"], years=years):
+        first[r["repo"]] = min(first.get(r["repo"], r["fetched"]), str(r["fetched"]))
+    return first
+
+
+def _repo_row(r: dict, last_seen: str, first_seen: str | None = None) -> dict:
+    """The ``repos`` row: ``last_seen`` is today; ``first_seen`` keeps its oldest value."""
     return {
         **{c: r.get(c, "") for c in TABLES["repos"].columns},
         "last_seen": last_seen,
+        "first_seen": min(first_seen or last_seen, last_seen),
     }
 
 
@@ -152,7 +171,10 @@ def collect(
     )
     report.repos_listed = len(repos)
     rows: dict[str, list[dict]] = {name: [] for name in TABLES}
-    rows["repos"] = [_repo_row(r, fetched) for r in repos]
+    known_first = _first_seen(store, today)
+    rows["repos"] = [
+        _repo_row(r, fetched, known_first.get(r["repo"])) for r in repos
+    ]
 
     # star history first, so today's live values (below) win a same-day merge
     if settings.backfill_stars:

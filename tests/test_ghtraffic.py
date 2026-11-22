@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from ghtraffic.tables import dump_csv
 from ghtraffic import TABLES, Files, GitHubError, collect, load_settings, read_table
 from ghtraffic.__main__ import main
 from ghtraffic.scaffold import WORKFLOW_PATH, init_data_repo
@@ -388,3 +389,28 @@ def test_change_only_on_any_entity():
     assert merge_rows(spec, kept, rows) == kept
     with pytest.raises(ValueError):
         TableSpec("x", ("date", "a"), key=("date", "a"), merge="change_only", entity=())
+
+
+def test_first_seen_keeps_the_oldest_day(tmp_path):
+    store = Files(tmp_path)
+    gh = FakeGitHub(_days("2026-10-27", 14))
+    _run(store, gh, "2026-11-10T03:00:00")
+    _run(store, gh, "2026-11-12T03:00:00")
+    repos = {r["repo"]: r for r in read_table(store, TABLES["repos"])}
+    assert {r["first_seen"] for r in repos.values()} == {"2026-11-10"}
+    assert {r["last_seen"] for r in repos.values()} == {"2026-11-12"}
+
+
+def test_first_seen_of_a_repo_recorded_before_the_column_comes_from_its_first_snapshot(tmp_path):
+    store = Files(tmp_path)
+    gh = FakeGitHub(_days("2026-10-27", 14))
+    _run(store, gh, "2026-11-10T03:00:00")
+    # make it look like an older data dir: no first_seen on any repo row
+    rows = read_table(store, TABLES["repos"])
+    for r in rows:
+        r["first_seen"] = ""
+    store["repos.csv"] = dump_csv(TABLES["repos"], rows)
+    _run(store, gh, "2026-11-12T03:00:00")
+    got = {r["repo"]: r["first_seen"] for r in read_table(store, TABLES["repos"])}
+    assert got["me/a"] == "2026-11-10"
+    assert got["me/b"] == "2026-11-12"  # never snapshotted (no access): today
