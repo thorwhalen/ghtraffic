@@ -198,6 +198,17 @@ describe("snapshots", () => {
     const earlier = topReferrers(idx, ["a/one", "b/two"], "2026-03-07");
     expect(earlier.items).toEqual([{ key: "google.com", label: "google.com", count: 100, uniques: 50, repos: ["a/one"] }]);
   });
+  it("prefers a newer popular_latest window for 'now', and ignores it for an earlier asOf", () => {
+    const refsNow = new Map(idx.referrersNow);
+    const one = new Map(refsNow.get("a/one"));
+    one.set("2026-03-10", [{ fetched: "2026-03-10", repo: "a/one", referrer: "news.com", count: 70, uniques: 30 }]);
+    refsNow.set("a/one", one);
+    const fresh = { ...idx, referrersNow: refsNow };
+    const now = topReferrers(fresh, ["a/one"], "2026-03-10");
+    expect(now.items.map((i) => i.key)).toEqual(["news.com"]);
+    expect(now.to).toBe("2026-03-10");
+    expect(topReferrers(fresh, ["a/one"], "2026-03-09").items.map((i) => i.key)).toEqual(["google.com", "t.co"]);
+  });
   it("sums 14-day window snapshots across repos, latest per repo", () => {
     expect(windowSummary(idx, ["a/one", "b/two"], "views", "2026-03-10")).toEqual({ count: 33, uniques: 9, from: "2026-03-08", to: "2026-03-08", repos: 2 });
   });

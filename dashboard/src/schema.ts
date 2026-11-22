@@ -21,6 +21,7 @@ export const TABLE_COLUMNS = {
   "windows": ["fetched", "repo", "kind", "count", "uniques"],
   "referrers": ["fetched", "repo", "referrer", "count", "uniques"],
   "paths": ["fetched", "repo", "path", "title", "count", "uniques"],
+  "popular_latest": ["fetched", "repo", "kind", "name", "title", "count", "uniques"],
   "stars": ["date", "repo", "stars", "forks", "watchers"],
   "backfills": ["repo", "kind", "date"],
   "repos": ["repo", "owner", "private", "fork", "archived", "can_push", "language", "created_at", "pushed_at", "description", "last_seen", "first_seen"],
@@ -54,6 +55,7 @@ export const COLUMN_KINDS = {
   repo: "str",
   owner: "str",
   kind: "str",
+  name: "str",
   referrer: "str",
   path: "str",
   title: "str",
@@ -116,6 +118,7 @@ export type Row<T extends TableName> = {
 export type DailyRow = Row<"views">;
 export type WindowRow = Row<"windows">;
 export type ReferrerRow = Row<"referrers">;
+export type PopularLatestRow = Row<"popular_latest">;
 export type PathRow = Row<"paths">;
 export type StarRow = Row<"stars">;
 export type RepoRow = Row<"repos">;

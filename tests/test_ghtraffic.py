@@ -151,7 +151,10 @@ def test_snapshots_follow_cadence(tmp_path):
     assert _run(store, gh, "2026-11-10T03:00:00").snapshots == 3
     gh.calls.clear()
     assert _run(store, gh, "2026-11-12T03:00:00").snapshots == 0
-    assert not any("popular" in c for c in gh.calls)  # 2 calls per repo, not 4
+    assert any("popular" in c for c in gh.calls)  # the 'latest' table is refreshed every run
+    assert len({r["fetched"] for r in read_table(store, TABLES["popular_latest"])}) == 1
+    assert {r["fetched"] for r in read_table(store, TABLES["popular_latest"])} == {"2026-11-12"}
+    assert {r["fetched"] for r in read_table(store, TABLES["referrers"])} == {"2026-11-10"}  # not a snapshot day
     assert _run(store, gh, "2026-11-23T03:00:00").snapshots == 0
     assert _run(store, gh, "2026-11-24T03:00:00").snapshots == 3
     refs = read_table(store, TABLES["referrers"])
